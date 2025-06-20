@@ -1,0 +1,1114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Market Flow with Time Aggregation</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #1a2a6c, #2c3e50, #4a235a);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
+            overflow-x: hidden;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            width: 100vw;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+            width: 100%;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(to right, #4facfe, #00f2fe, #8e2de2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            max-width: 800px;
+            margin: 0 auto 20px;
+            color: #ecf0f1;
+            line-height: 1.6;
+        }
+
+        .chart-container {
+            position: relative;
+            background: radial-gradient(circle, #34495e 0%, #2c3e50 100%);
+            border-radius: 50%;
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+            max-width: 90vmin;
+            max-height: 90vmin;
+            margin-bottom: 0;
+            border: 2px solid rgba(255,255,255,0.1);
+        }
+
+        .status-container {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 1000;
+        }
+
+        .status {
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        }
+
+        .status::before {
+            content: "";
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status.connected {
+            background: rgba(76, 175, 80, 0.8);
+        }
+
+        .status.connected::before {
+            background: white;
+        }
+
+        .status.disconnected {
+            background: rgba(244, 67, 54, 0.8);
+        }
+
+        .status.disconnected::before {
+            background: white;
+        }
+
+        .status.connecting {
+            background: rgba(255, 193, 7, 0.8);
+        }
+
+        .status.connecting::before {
+            background: white;
+        }
+
+        .chord {
+            fill-opacity: 0.6;
+            stroke: none;
+            transition: all 0.3s ease;
+        }
+
+        .chord:hover {
+            fill-opacity: 0.9;
+        }
+
+        .chord.highlighted {
+            fill-opacity: 0.9;
+            stroke: #fff;
+            stroke-width: 1px;
+        }
+
+        .group path {
+            stroke: rgba(255,255,255,0.1);
+            stroke-width: 1px;
+        }
+
+        .group:hover path {
+            stroke: rgba(255,255,255,0.5);
+            stroke-width: 2px;
+        }
+
+        .group text {
+            font-size: 12px;
+            font-weight: 600;
+            fill: white;
+            text-shadow: 0 0 3px rgba(0,0,0,0.8);
+            pointer-events: none;
+        }
+
+        .group:hover text {
+            font-size: 14px;
+            fill: #fff;
+        }
+
+        .tooltip {
+            position: fixed;
+            background: rgba(0,0,0,0.9);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 13px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 1000;
+            max-width: 250px;
+            border: 1px solid rgba(255,255,255,0.2);
+            backdrop-filter: blur(5px);
+        }
+
+        .tooltip-header {
+            font-weight: bold;
+            margin-bottom: 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.3);
+            padding-bottom: 5px;
+            display: flex;
+            align-items: center;
+        }
+
+        .tooltip-header::before {
+            content: "";
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .tooltip-header.binance::before { background: #f0b90b; }
+        .tooltip-header.bitget::before { background: #0ab6ff; }
+        .tooltip-header.bybit::before { background: #f9fafc; }
+
+        .flow-info {
+            margin: 5px 0;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .flow-positive { color: #4CAF50; }
+        .flow-negative { color: #f44336; }
+
+        /* Timeframe controls */
+        .timeframe-controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin: 15px 0;
+            flex-wrap: wrap;
+        }
+
+        .timeframe-btn {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+
+        .timeframe-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .timeframe-btn.active {
+            background: linear-gradient(to right, #4facfe, #00f2fe);
+            color: #1a2a6c;
+            box-shadow: 0 0 10px rgba(79, 172, 254, 0.5);
+        }
+
+        .timeframe-info {
+            font-size: 14px;
+            margin-top: 5px;
+            opacity: 0.8;
+        }
+
+        @media (max-width: 768px) {
+            .status-container {
+                top: 10px;
+                right: 10px;
+            }
+            
+            .status {
+                font-size: 11px;
+                padding: 6px 12px;
+            }
+            
+            .header h1 {
+                font-size: 1.8rem;
+            }
+            
+            .header p {
+                font-size: 0.9rem;
+            }
+            
+            .timeframe-btn {
+                padding: 6px 12px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Cryptocurrency Market Flow Analysis</h1>
+            <p>Real-time visualization of cryptocurrency flows between assets. Arcs represent trading volume, flow bands show directional bias. Data aggregated from Binance, Bitget and Bybit exchanges.</p>
+            
+            <div class="timeframe-controls">
+                <button class="timeframe-btn" data-timeframe="1">1 min</button>
+                <button class="timeframe-btn active" data-timeframe="5">5 min</button>
+                <button class="timeframe-btn" data-timeframe="15">15 min</button>
+            </div>
+            <div class="timeframe-info" id="timeframe-info">Showing aggregated flows over last 5 minutes</div>
+        </div>
+        
+        <div class="chart-container">
+            <div class="status-container">
+                <div class="status disconnected" id="status-binance">Binance: Connecting...</div>
+                <div class="status disconnected" id="status-bitget">Bitget: Connecting...</div>
+                <div class="status disconnected" id="status-bybit">Bybit: Connecting...</div>
+            </div>
+            <svg id="flow-diagram"></svg>
+            <div class="tooltip" id="tooltip"></div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration with updated symbols
+        const CONFIG = {
+            width: Math.min(900, window.innerWidth * 0.9),
+            height: Math.min(900, window.innerHeight * 0.9),
+            innerRadius: Math.min(320, window.innerWidth * 0.3),
+            outerRadius: Math.min(360, window.innerWidth * 0.35),
+            updateInterval: 1000, // Changed to 1 second
+            decayFactor: 0.98,
+            minFlowThreshold: 10,
+            symbols: [
+                // Cryptos (15 coins)
+                'BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'DOGE', 'ADA', 'AVAX', 'SHIB', 'DOT', 'LINK', 'TRX', 'TON', 'MATIC', 'BCH', 
+                // Stablecoins
+                'USDT', 'USDC', 'FDUSD',           
+                // Fiat Currencies
+                'USD', 'EUR', 'BRL', 'GBP', 'JPY', 'TRY'
+            ],
+            // Base cryptocurrencies that will be paired with quote currencies
+            baseCryptos: ['BTC', 'ETH', 'BNB', 'SOL', 'XRP', 'DOGE', 'ADA', 'AVAX', 'SHIB', 'DOT', 'LINK', 'TRX', 'TON', 'MATIC', 'BCH'],
+            // Quote currencies (stablecoins and fiat)
+            quoteCurrencies: ['USDT', 'USDC', 'FDUSD', 'USD', 'EUR', 'BRL', 'GBP', 'JPY', 'TRY'],
+            circularBufferSize: 1000 // Max trades to store per flow pair
+        };
+
+        // Timeframe configuration - Removed 30min and 1hr
+        const TIMEFRAMES = {
+            '1': 1 * 60 * 1000,   // 1 minute in milliseconds
+            '5': 5 * 60 * 1000,   // 5 minutes in milliseconds
+            '15': 15 * 60 * 1000
+        };
+        
+        // Circular Buffer Implementation
+        class CircularBuffer {
+            constructor(size) {
+                this.size = size;
+                this.buffer = new Array(size);
+                this.start = 0;
+                this.end = 0;
+                this.count = 0;
+            }
+
+            push(item) {
+                this.buffer[this.end] = item;
+                this.end = (this.end + 1) % this.size;
+                if (this.count === this.size) {
+                    this.start = (this.start + 1) % this.size;
+                } else {
+                    this.count++;
+                }
+            }
+
+            forEach(callback) {
+                for (let i = 0; i < this.count; i++) {
+                    const index = (this.start + i) % this.size;
+                    callback(this.buffer[index]);
+                }
+            }
+
+            reduce(callback, initialValue) {
+                let accumulator = initialValue;
+                for (let i = 0; i < this.count; i++) {
+                    const index = (this.start + i) % this.size;
+                    accumulator = callback(accumulator, this.buffer[index]);
+                }
+                return accumulator;
+            }
+        }
+        
+        // Global variables
+        let svg, tooltip;
+        let binanceWebSocket = null;
+        let bitgetWebSocket = null;
+        let bybitWebSocket = null;
+        let flowData = new Map();
+        let currentData = new Map();
+        let historicalData = new Map();
+        let colorScale;
+        let lastUpdateTime = 0;
+        let bitgetPingInterval = null;
+        let bitgetLastPong = 0;
+        let bybitPingInterval = null;
+        let bybitLastPong = 0;
+        let currentTimeframe = '5'; // Default to 5 minutes
+
+        // Initialize visualization
+        function initVisualization() {
+            svg = d3.select("#flow-diagram")
+                .attr("width", CONFIG.width)
+                .attr("height", CONFIG.height);
+
+            tooltip = d3.select("#tooltip");
+
+            // Updated color palette for 15 cryptocurrencies
+            colorScale = d3.scaleOrdinal()
+                .domain(CONFIG.symbols)
+                .range([
+                    // Cryptos (15 coins)
+                    '#f7931a', '#627eea', '#f0b90b', '#9945ff', '#00aae4', 
+                    '#c2a633', '#3468D1', '#E84142', '#F00500', '#E6007A',
+                    '#2A5ADA', '#FF060A', '#0088CC', '#8247E5', '#0AC18E',
+                    // Stablecoins
+                    '#26a17b', '#2775ca', '#FFC107',
+                    // Fiat
+                    '#4caf50', '#003399', '#009739', '#012169', '#bc002d', '#e30a17'
+                ]);
+
+            // Initialize chord layout
+            chordLayout = d3.chord()
+                .padAngle(0.02)
+                .sortSubgroups(d3.descending);
+
+            // Initialize data structures
+            initDataStructures();
+
+            // Initialize with demo data for better UX
+            initializeDemoData();
+            updateFlowDiagram();
+        }
+
+        // Initialize data structures with circular buffers
+        function initDataStructures() {
+            CONFIG.symbols.forEach(symbol => {
+                flowData.set(symbol, new Map());
+                currentData.set(symbol, new Map());
+                historicalData.set(symbol, new Map());
+                
+                CONFIG.symbols.forEach(target => {
+                    if (symbol !== target) {
+                        flowData.get(symbol).set(target, 0);
+                        currentData.get(symbol).set(target, 0);
+                        // Initialize with circular buffer
+                        historicalData.get(symbol).set(target, 
+                            new CircularBuffer(CONFIG.circularBufferSize)
+                        );
+                    }
+                });
+            });
+        }
+
+        // Initialize with demo data
+        function initializeDemoData() {
+            CONFIG.symbols.forEach((symbol, i) => {
+                CONFIG.symbols.forEach((target, j) => {
+                    if (i !== j) {
+                        const randomFlow = Math.random() * 1000 + 100;
+                        flowData.get(symbol).set(target, randomFlow);
+                    }
+                });
+            });
+        }
+
+        // Create Binance WebSocket connection
+        function connectBinanceWebSocket() {
+            updateStatus('binance', 'connecting', 'Binance: Connecting...');
+            
+            // Create streams for all base crypto vs quote currency pairs
+            const streams = [];
+            CONFIG.baseCryptos.forEach(crypto => {
+                CONFIG.quoteCurrencies.forEach(quote => {
+                    // Create pair in Binance format (e.g., btcusdt)
+                    const stream = `${crypto.toLowerCase()}${quote.toLowerCase()}@aggTrade`;
+                    streams.push(stream);
+                });
+            });
+            
+            const wsUrl = `wss://stream.binance.com:9443/stream?streams=${streams.join('/')}`;
+            
+            binanceWebSocket = new WebSocket(wsUrl);
+            
+            binanceWebSocket.onopen = function() {
+                updateStatus('binance', 'connected', 'Binance: Live Market Data');
+                console.log('Connected to Binance WebSocket');
+            };
+            
+            binanceWebSocket.onmessage = function(event) {
+                try {
+                    const message = JSON.parse(event.data);
+                    if (message && message.data && message.data.s) {
+                        processTradeFlow('binance', message.data);
+                    }
+                } catch (error) {
+                    console.error('Error parsing Binance data:', error);
+                }
+            };
+            
+            binanceWebSocket.onclose = function() {
+                updateStatus('binance', 'disconnected', 'Binance: Reconnecting...');
+                console.log('Binance WebSocket disconnected');
+                setTimeout(connectBinanceWebSocket, 3000);
+            };
+            
+            binanceWebSocket.onerror = function(error) {
+                updateStatus('binance', 'disconnected', 'Binance: Connection Error');
+                console.error('Binance WebSocket error:', error);
+            };
+        }
+
+        // Create Bitget WebSocket connection
+        function connectBitgetWebSocket() {
+            updateStatus('bitget', 'connecting', 'Bitget: Connecting...');
+            
+            bitgetWebSocket = new WebSocket('wss://ws.bitget.com/v2/ws/public');
+            
+            bitgetWebSocket.onopen = function() {
+                updateStatus('bitget', 'connected', 'Bitget: Live Market Data');
+                console.log('Connected to Bitget WebSocket');
+                
+                // Subscribe to trading pairs
+                const subscriptions = [];
+                CONFIG.baseCryptos.forEach(crypto => {
+                    CONFIG.quoteCurrencies.forEach(quote => {
+                        const pair = `${crypto}${quote}`.toUpperCase();
+                        subscriptions.push({
+                            instType: "SPOT",
+                            channel: "trade",
+                            instId: pair
+                        });
+                    });
+                });
+                
+                const subscribeMsg = {
+                    op: "subscribe",
+                    args: subscriptions
+                };
+                
+                bitgetWebSocket.send(JSON.stringify(subscribeMsg));
+                
+                // Start ping-pong mechanism
+                startBitgetPing();
+            };
+            
+            bitgetWebSocket.onmessage = function(event) {
+                try {
+                    // Handle pong responses
+                    if (event.data === "pong") {
+                        bitgetLastPong = Date.now();
+                        return;
+                    }
+                    
+                    const message = JSON.parse(event.data);
+                    if (message && message.action === "update" && message.arg && message.arg.channel === "trade") {
+                        processTradeFlow('bitget', message);
+                    }
+                } catch (error) {
+                    console.error('Error parsing Bitget data:', error);
+                }
+            };
+            
+            bitgetWebSocket.onclose = function() {
+                updateStatus('bitget', 'disconnected', 'Bitget: Reconnecting...');
+                console.log('Bitget WebSocket disconnected');
+                stopBitgetPing();
+                setTimeout(connectBitgetWebSocket, 3000);
+            };
+            
+            bitgetWebSocket.onerror = function(error) {
+                updateStatus('bitget', 'disconnected', 'Bitget: Connection Error');
+                console.error('Bitget WebSocket error:', error);
+                stopBitgetPing();
+            };
+        }
+
+        // Create Bybit WebSocket connection
+        function connectBybitWebSocket() {
+            updateStatus('bybit', 'connecting', 'Bybit: Connecting...');
+            
+            bybitWebSocket = new WebSocket('wss://stream.bybit.com/v5/public/spot');
+            
+            bybitWebSocket.onopen = function() {
+                updateStatus('bybit', 'connected', 'Bybit: Live Market Data');
+                console.log('Connected to Bybit WebSocket');
+                
+                // Subscribe to trade channels for all pairs
+                const subscriptions = [];
+                CONFIG.baseCryptos.forEach(crypto => {
+                    CONFIG.quoteCurrencies.forEach(quote => {
+                        const pair = `${crypto}${quote}`.toUpperCase();
+                        subscriptions.push(`publicTrade.${pair}`);
+                    });
+                });
+                
+                // Ensure we don't exceed args character limit
+                const subscribeMsg = {
+                    op: "subscribe",
+                    args: subscriptions
+                };
+                
+                bybitWebSocket.send(JSON.stringify(subscribeMsg));
+                
+                // Start ping-pong mechanism (every 20 seconds)
+                startBybitPing();
+            };
+            
+            bybitWebSocket.onmessage = function(event) {
+                try {
+                    const message = JSON.parse(event.data);
+                    
+                    // Handle pong responses
+                    if (message.op === "ping" && message.ret_msg === "pong") {
+                        bybitLastPong = Date.now();
+                        return;
+                    }
+                    
+                    // Process trade data
+                    if (message.topic && message.topic.startsWith("publicTrade.") && message.data) {
+                        processTradeFlow('bybit', message);
+                    }
+                } catch (error) {
+                    console.error('Error parsing Bybit data:', error);
+                }
+            };
+            
+            bybitWebSocket.onclose = function() {
+                updateStatus('bybit', 'disconnected', 'Bybit: Reconnecting...');
+                console.log('Bybit WebSocket disconnected');
+                stopBybitPing();
+                setTimeout(connectBybitWebSocket, 3000);
+            };
+            
+            bybitWebSocket.onerror = function(error) {
+                updateStatus('bybit', 'disconnected', 'Bybit: Connection Error');
+                console.error('Bybit WebSocket error:', error);
+                stopBybitPing();
+            };
+        }
+
+        // Start Bybit ping-pong mechanism
+        function startBybitPing() {
+            stopBybitPing();
+            bybitLastPong = Date.now();
+            
+            // Send ping every 20 seconds as recommended
+            bybitPingInterval = setInterval(() => {
+                if (bybitWebSocket && bybitWebSocket.readyState === WebSocket.OPEN) {
+                    bybitWebSocket.send(JSON.stringify({ op: "ping" }));
+                    
+                    // Check if we received a pong in the last 40 seconds
+                    if (Date.now() - bybitLastPong > 40000) {
+                        console.warn("Bybit: No pong received in 40 seconds, reconnecting...");
+                        bybitWebSocket.close();
+                    }
+                }
+            }, 20000);
+        }
+
+        // Stop Bybit ping-pong mechanism
+        function stopBybitPing() {
+            if (bybitPingInterval) {
+                clearInterval(bybitPingInterval);
+                bybitPingInterval = null;
+            }
+        }
+
+        // Start Bitget ping-pong mechanism
+        function startBitgetPing() {
+            stopBitgetPing();
+            bitgetLastPong = Date.now();
+            
+            // Send ping every 30 seconds
+            bitgetPingInterval = setInterval(() => {
+                if (bitgetWebSocket && bitgetWebSocket.readyState === WebSocket.OPEN) {
+                    bitgetWebSocket.send("ping");
+                    
+                    // Check if we received a pong in the last 2 minutes
+                    if (Date.now() - bitgetLastPong > 120000) {
+                        console.warn("Bitget: No pong received in 2 minutes, reconnecting...");
+                        bitgetWebSocket.close();
+                    }
+                }
+            }, 30000);
+        }
+
+        // Stop Bitget ping-pong mechanism
+        function stopBitgetPing() {
+            if (bitgetPingInterval) {
+                clearInterval(bitgetPingInterval);
+                bitgetPingInterval = null;
+            }
+        }
+
+        // Process trade flow from either exchange - FIXED LOGIC
+        function processTradeFlow(exchange, trade) {
+            let base, quote, price, quantity, takerBuying;
+            
+            if (exchange === 'binance') {
+                // Binance data structure
+                const pair = trade.s;
+                if (!pair) return;
+                
+                const baseQuote = extractBaseQuote(pair);
+                if (!baseQuote) return;
+                
+                base = baseQuote.base;
+                quote = baseQuote.quote;
+                price = parseFloat(trade.p) || 0;
+                quantity = parseFloat(trade.q) || 0;
+                // Binance: m=true means buyer is maker -> taker is seller (not buying)
+                takerBuying = !trade.m;
+            } else if (exchange === 'bitget') {
+                // Bitget data structure
+                const pair = trade.arg.instId;
+                if (!pair || !trade.data || !trade.data.length) return;
+                
+                const baseQuote = extractBaseQuote(pair);
+                if (!baseQuote) return;
+                
+                // Use the first trade in the array
+                const tradeData = trade.data[0];
+                base = baseQuote.base;
+                quote = baseQuote.quote;
+                price = parseFloat(tradeData.price) || 0;
+                quantity = parseFloat(tradeData.size) || 0;
+                // Bitget: side='buy' means taker is buying
+                takerBuying = tradeData.side === 'buy';
+            } else if (exchange === 'bybit') {
+                // Bybit data structure
+                const topic = trade.topic;
+                if (!topic || !trade.data || !trade.data.length) return;
+                
+                // Extract pair from topic (publicTrade.BTCUSDT)
+                const pair = topic.split('.')[1];
+                if (!pair) return;
+                
+                const baseQuote = extractBaseQuote(pair);
+                if (!baseQuote) return;
+                
+                // Use the first trade in the array
+                const tradeData = trade.data[0];
+                base = baseQuote.base;
+                quote = baseQuote.quote;
+                price = parseFloat(tradeData.p) || 0;
+                quantity = parseFloat(tradeData.v) || 0;
+                // Bybit: S='Buy' means taker is buying
+                takerBuying = tradeData.S === 'Buy';
+            } else {
+                return;
+            }
+            
+            const volume = price * quantity;
+            if (volume === 0) return;
+            
+            // Record current timestamp
+            const timestamp = Date.now();
+            
+            if (takerBuying) {
+                // Money flowing into crypto: stable/fiat -> crypto
+                const currentFlow = currentData.get(quote).get(base) || 0;
+                currentData.get(quote).set(base, currentFlow + volume);
+                
+                // Update historical data using circular buffer
+                historicalData.get(quote).get(base).push({ timestamp, value: volume });
+            } else {
+                // Money flowing out of crypto: crypto -> stable/fiat
+                const currentFlow = currentData.get(base).get(quote) || 0;
+                currentData.get(base).set(quote, currentFlow + volume);
+                
+                // Update historical data using circular buffer
+                historicalData.get(base).get(quote).push({ timestamp, value: volume });
+            }
+        }
+
+        // Helper to extract base and quote from trading pair
+        function extractBaseQuote(pair) {
+            // Convert to uppercase for matching
+            const upperPair = pair.toUpperCase();
+            
+            // Sort quotes by length to handle cases like USDC vs USD
+            const sortedQuotes = [...CONFIG.quoteCurrencies]
+                .map(q => q.toUpperCase())
+                .sort((a, b) => b.length - a.length);
+            
+            // Try to match the longest quote first
+            for (const quote of sortedQuotes) {
+                if (upperPair.endsWith(quote)) {
+                    const base = upperPair.substring(0, upperPair.length - quote.length);
+                    return { base, quote };
+                }
+            }
+            return null;
+        }
+
+        // Apply exponential decay and update flow data
+        function updateFlowData() {
+            const now = Date.now();
+            const timeframeMs = TIMEFRAMES[currentTimeframe];
+            
+            CONFIG.symbols.forEach(fromSymbol => {
+                CONFIG.symbols.forEach(toSymbol => {
+                    if (fromSymbol !== toSymbol) {
+                        // Calculate flow for selected timeframe using circular buffer
+                        let aggregatedFlow = 0;
+                        const history = historicalData.get(fromSymbol).get(toSymbol);
+                        
+                        if (history && history.count > 0) {
+                            // Aggregate flows within the timeframe
+                            history.forEach(item => {
+                                if (now - item.timestamp <= timeframeMs) {
+                                    aggregatedFlow += item.value;
+                                }
+                            });
+                        }
+                        
+                        // Apply exponential decay for smoother transitions
+                        const existingFlow = flowData.get(fromSymbol).get(toSymbol) || 0;
+                        const decayedFlow = existingFlow * CONFIG.decayFactor;
+                        const newFlow = decayedFlow + aggregatedFlow;
+                        
+                        flowData.get(fromSymbol).set(toSymbol, 
+                            Math.abs(newFlow) > CONFIG.minFlowThreshold ? newFlow : 0
+                        );
+                    }
+                });
+            });
+        }
+
+        // Create matrix for chord diagram
+        function createFlowMatrix() {
+            const matrix = [];
+            const currencies = CONFIG.symbols;
+            
+            currencies.forEach((fromCurrency, i) => {
+                matrix[i] = [];
+                currencies.forEach((toCurrency, j) => {
+                    if (i === j) {
+                        matrix[i][j] = 0;
+                    } else {
+                        const flow = flowData.get(fromCurrency).get(toCurrency) || 0;
+                        // Use only positive flows for visualization
+                        matrix[i][j] = Math.max(0, flow);
+                    }
+                });
+            });
+            
+            return { matrix, currencies };
+        }
+
+        // Update the flow diagram
+        function updateFlowDiagram() {
+            try {
+                const { matrix, currencies } = createFlowMatrix();
+                
+                // Generate chord data properly
+                const chords = chordLayout(matrix);
+                
+                const arc = d3.arc()
+                    .innerRadius(CONFIG.innerRadius)
+                    .outerRadius(CONFIG.outerRadius);
+
+                const ribbon = d3.ribbon()
+                    .radius(CONFIG.innerRadius - 5);
+
+                // Create or select main group
+                let mainGroup = svg.select("g.main-group");
+                if (mainGroup.empty()) {
+                    mainGroup = svg.append("g")
+                        .attr("class", "main-group")
+                        .attr("transform", `translate(${CONFIG.width/2},${CONFIG.height/2})`);
+                }
+                
+                // Update groups (currency arcs)
+                const groups = mainGroup.selectAll(".group")
+                    .data(chords.groups);
+                
+                groups.exit().remove();
+                
+                const groupsEnter = groups.enter().append("g")
+                    .attr("class", "group");
+                
+                const groupsUpdate = groupsEnter.merge(groups);
+                
+                // Update group paths
+                let groupPaths = groupsUpdate.selectAll("path").data(d => [d]);
+                groupPaths.exit().remove();
+                
+                groupPaths.enter().append("path")
+                    .merge(groupPaths)
+                    .style("fill", d => colorScale(currencies[d.index]))
+                    .attr("d", arc)
+                    .on("mouseover", function(event, d) {
+                        highlightSymbol(currencies[d.index]);
+                        showSymbolTooltip(event, currencies[d.index], d);
+                    })
+                    .on("mouseout", function() {
+                        clearHighlight();
+                        hideTooltip();
+                    });
+
+                // Update group labels
+                let groupTexts = groupsUpdate.selectAll("text").data(d => [d]);
+                groupTexts.exit().remove();
+                
+                groupTexts.enter().append("text")
+                    .merge(groupTexts)
+                    .each(d => { d.angle = (d.startAngle + d.endAngle) / 2; })
+                    .attr("dy", ".35em")
+                    .attr("transform", d => {
+                        const angle = d.angle * 180 / Math.PI - 90;
+                        const radius = CONFIG.outerRadius + 15;
+                        return `rotate(${angle}) translate(${radius}) ${d.angle > Math.PI ? "rotate(180)" : ""}`;
+                    })
+                    .style("text-anchor", d => d.angle > Math.PI ? "end" : "start")
+                    .text(d => currencies[d.index]);
+
+                // Update chords (flow ribbons)
+                const chordPaths = mainGroup.selectAll(".chord")
+                    .data(chords);
+                
+                chordPaths.exit().remove();
+                
+                chordPaths.enter().append("path")
+                    .attr("class", "chord")
+                    .merge(chordPaths)
+                    // Simplified coloring - use source currency color
+                    .style("fill", d => colorScale(currencies[d.source.index]))
+                    .style("fill-opacity", d => {
+                        const flow = d.source.value + d.target.value;
+                        return Math.min(0.8, Math.max(0.1, flow / 10000));
+                    })
+                    .attr("d", ribbon)
+                    .on("mouseover", function(event, d) {
+                        showFlowTooltip(event, currencies[d.source.index], currencies[d.target.index]);
+                    })
+                    .on("mouseout", hideTooltip);
+                    
+            } catch (error) {
+                console.error('Error updating flow diagram:', error);
+            }
+        }
+
+        // Highlight symbol and related flows
+        function highlightSymbol(symbol) {
+            svg.selectAll(".chord")
+                .classed("highlighted", function(d) {
+                    const currencies = CONFIG.symbols;
+                    return currencies[d.source.index] === symbol || currencies[d.target.index] === symbol;
+                });
+        }
+
+        // Clear highlights
+        function clearHighlight() {
+            svg.selectAll(".chord").classed("highlighted", false);
+        }
+
+        // Show symbol analysis tooltip
+        function showSymbolTooltip(event, symbol, groupData) {
+            const inflows = [];
+            const outflows = [];
+            
+            CONFIG.symbols.forEach(otherSymbol => {
+                if (otherSymbol !== symbol) {
+                    const inflow = flowData.get(otherSymbol).get(symbol) || 0;
+                    const outflow = flowData.get(symbol).get(otherSymbol) || 0;
+                    
+                    if (Math.abs(inflow) > CONFIG.minFlowThreshold) {
+                        inflows.push({ symbol: otherSymbol, flow: inflow });
+                    }
+                    if (Math.abs(outflow) > CONFIG.minFlowThreshold) {
+                        outflows.push({ symbol: otherSymbol, flow: outflow });
+                    }
+                }
+            });
+            
+            inflows.sort((a, b) => Math.abs(b.flow) - Math.abs(a.flow));
+            outflows.sort((a, b) => Math.abs(b.flow) - Math.abs(a.flow));
+            
+            let content = `<div class="tooltip-header">${symbol.toUpperCase()} Market Analysis</div>`;
+            content += `<div style="margin-bottom: 5px; font-size: 12px; opacity: 0.8;">${getTimeframeText()} timeframe</div>`;
+            
+            if (inflows.length > 0) {
+                content += `<div style="margin-top: 10px;"><strong>Top Inflows:</strong></div>`;
+                inflows.slice(0, 3).forEach(item => {
+                    const className = item.flow > 0 ? 'flow-positive' : 'flow-negative';
+                    const arrow = item.flow > 0 ? '↑' : '↓';
+                    content += `<div class="flow-info"><span>${item.symbol} ${arrow}</span><span class="${className}">${formatFlow(item.flow)}</span></div>`;
+                });
+            }
+            
+            if (outflows.length > 0) {
+                content += `<div style="margin-top: 10px;"><strong>Top Outflows:</strong></div>`;
+                outflows.slice(0, 3).forEach(item => {
+                    const className = item.flow > 0 ? 'flow-positive' : 'flow-negative';
+                    const arrow = item.flow > 0 ? '↑' : '↓';
+                    content += `<div class="flow-info"><span>${item.symbol} ${arrow}</span><span class="${className}">${formatFlow(item.flow)}</span></div>`;
+                });
+            }
+            
+            showTooltip(event, content);
+        }
+
+        // Show flow tooltip
+        function showFlowTooltip(event, fromSymbol, toSymbol) {
+            const flow = flowData.get(fromSymbol).get(toSymbol) || 0;
+            const reverseFlow = flowData.get(toSymbol).get(fromSymbol) || 0;
+            const netFlow = flow - reverseFlow;
+            
+            let content = `<div class="tooltip-header">${fromSymbol} ⟷ ${toSymbol}</div>`;
+            content += `<div style="margin-bottom: 5px; font-size: 12px; opacity: 0.8;">${getTimeframeText()} timeframe</div>`;
+            content += `<div class="flow-info"><span>Net Flow:</span><span class="${netFlow > 0 ? 'flow-positive' : 'flow-negative'}">${formatFlow(netFlow)}</span></div>`;
+            content += `<div class="flow-info"><span>${fromSymbol} → ${toSymbol}:</span><span>${formatFlow(flow)}</span></div>`;
+            content += `<div class="flow-info"><span>${toSymbol} → ${fromSymbol}:</span><span>${formatFlow(reverseFlow)}</span></div>`;
+            
+            showTooltip(event, content);
+        }
+
+        // Utility functions
+        function showTooltip(event, content) {
+            const padding = 15;
+            const maxX = window.innerWidth - tooltip.node().offsetWidth - padding;
+            const maxY = window.innerHeight - tooltip.node().offsetHeight - padding;
+            
+            const left = Math.min(maxX, event.clientX + padding);
+            const top = Math.min(maxY, event.clientY - padding);
+            
+            tooltip
+                .style("opacity", 1)
+                .html(content)
+                .style("left", left + "px")
+                .style("top", top + "px");
+        }
+
+        function hideTooltip() {
+            tooltip.style("opacity", 0);
+        }
+
+        function formatFlow(flow) {
+            const absFlow = Math.abs(flow);
+            const sign = flow >= 0 ? '+' : '-';
+            
+            if (absFlow >= 1000000) {
+                return `${sign}$${(absFlow / 1000000).toFixed(2)}M`;
+            } else if (absFlow >= 1000) {
+                return `${sign}$${(absFlow / 1000).toFixed(1)}K`;
+            } else {
+                return `${sign}$${absFlow.toFixed(0)}`;
+            }
+        }
+
+        function updateStatus(exchange, status, text) {
+            const statusElement = document.getElementById(`status-${exchange}`);
+            if (statusElement) {
+                statusElement.className = `status ${status}`;
+                statusElement.textContent = text;
+            }
+        }
+        
+        // Get human-readable timeframe text
+        function getTimeframeText() {
+            switch(currentTimeframe) {
+                case '1': return '1 min';
+                case '5': return '5 min';
+                case '15': return '15 min';
+                default: return '5 min';
+            }
+        }
+        
+        // Set the current timeframe
+        function setTimeframe(timeframe) {
+            currentTimeframe = timeframe;
+            
+            // Update UI
+            document.querySelectorAll('.timeframe-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('data-timeframe') === timeframe);
+            });
+            
+            // Update timeframe info
+            document.getElementById('timeframe-info').textContent = 
+                `Showing aggregated flows over last ${getTimeframeText()}`;
+        }
+
+        // Main update loop (now runs every second)
+        function updateVisualization() {
+            const now = Date.now();
+            if (now - lastUpdateTime < CONFIG.updateInterval) return;
+            lastUpdateTime = now;
+            
+            updateFlowData();
+            updateFlowDiagram();
+        }
+
+        // Handle window resize
+        function handleResize() {
+            const now = Date.now();
+            if (now - lastUpdateTime < CONFIG.updateInterval) return;
+            lastUpdateTime = now;
+            
+            const newWidth = Math.min(900, window.innerWidth * 0.9);
+            const newHeight = Math.min(900, window.innerHeight * 0.9);
+            
+            if (Math.abs(CONFIG.width - newWidth) > 50) {
+                CONFIG.width = newWidth;
+                CONFIG.height = newHeight;
+                CONFIG.innerRadius = Math.min(320, window.innerWidth * 0.3);
+                CONFIG.outerRadius = Math.min(360, window.innerWidth * 0.35);
+                
+                svg.attr("width", CONFIG.width).attr("height", CONFIG.height);
+                updateFlowDiagram();
+            }
+        }
+
+        // Initialize application
+        function init() {
+            initVisualization();
+            connectBinanceWebSocket();
+            connectBitgetWebSocket();
+            connectBybitWebSocket();
+            
+            // Add event listeners for timeframe buttons
+            document.querySelectorAll('.timeframe-btn').forEach(button => {
+                button.addEventListener('click', () => {
+                    setTimeframe(button.getAttribute('data-timeframe'));
+                });
+            });
+            
+            // Update visualization every second
+            setInterval(updateVisualization, CONFIG.updateInterval);
+            
+            // Handle window resize
+            window.addEventListener('resize', handleResize);
+        }
+
+        // Start the application
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
